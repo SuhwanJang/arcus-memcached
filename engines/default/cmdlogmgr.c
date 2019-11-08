@@ -40,9 +40,7 @@ typedef struct _group_commit {
 } group_commit_t;
 
 typedef struct _wait_entry_info {
-    int16_t           free_list;
-    int16_t           used_head;
-    int16_t           used_tail;
+    log_waiter_t *    free_list;
     uint16_t          cur_waiters;
     uint16_t          max_waiters;
 } log_wait_entry_info;
@@ -87,23 +85,14 @@ log_waiter_t *cmdlog_waiter_alloc(const void *cookie)
     log_waiter_t *waiter = NULL;
     log_wait_entry_info *info = &logmgr_gl.wait_entry_info;
     pthread_mutex_lock(&logmgr_gl.wait_entry_lock);
-    if (info->free_list != -1) {
-        waiter = &logmgr_gl.wait_entry_table[info->free_list];
-        info->free_list = waiter->next_eid;
-
-        waiter->next_eid = -1;
-        if (info->used_tail == -1) {
-            waiter->prev_eid = -1;
-            info->used_head = waiter->curr_eid;
-            info->used_tail = waiter->curr_eid;
-        } else {
-            waiter->prev_eid = info->used_tail;
-            logmgr_gl.wait_entry_table[info->used_tail].next_eid = waiter->curr_eid;
-            info->used_tail = waiter->curr_eid;
-        }
-        info->cur_waiters += 1;
-
+    if (info->free_list != NULL) {
+        waiter = info->free_list;
         waiter->cookie = cookie;
+        if (++info->cur_waiters == info->max_waiters) {
+            info->free_list = NULL;
+        } else {
+            info->free_list = &logmgr_gl.wait_entry_table[++info->cur_waiters];
+        }
     }
     pthread_mutex_unlock(&logmgr_gl.wait_entry_lock);
     if (waiter) {
@@ -159,14 +148,7 @@ static void do_cmdlog_waiter_free(log_waiter_t *waiter, bool lock_hold)
 
     log_wait_entry_info *info = &logmgr_gl.wait_entry_info;
     pthread_mutex_lock(&logmgr_gl.wait_entry_lock);
-    if (waiter->prev_eid == -1) info->used_head = waiter->next_eid;
-    else logmgr_gl.wait_entry_table[waiter->prev_eid].next_eid = waiter->next_eid;
-    if (waiter->next_eid == -1) info->used_tail = waiter->prev_eid;
-    else logmgr_gl.wait_entry_table[waiter->next_eid].prev_eid = waiter->prev_eid;
-    waiter->prev_eid = -1;
-    waiter->next_eid = info->free_list;
-    info->free_list = waiter->curr_eid;
-    info->cur_waiters -= 1;
+    info->free_list = &logmgr_gl.wait_entry_table[info->cur_waiters--];
     pthread_mutex_unlock(&logmgr_gl.wait_entry_lock);
 }
 
@@ -351,14 +333,9 @@ ENGINE_ERROR_CODE cmdlog_waiter_init(struct default_engine *engine)
     }
 
     for (i = 0; i < info->max_waiters; i++) {
-        logmgr_gl.wait_entry_table[i].curr_eid = i;
-        if (i < (info->max_waiters-1)) logmgr_gl.wait_entry_table[i].next_eid = i+1;
-        else                          logmgr_gl.wait_entry_table[i].next_eid = -1;
         LOGSN_SET_NULL(&logmgr_gl.wait_entry_table[i].lsn);
     }
-    info->free_list = 0; /* the first entry */
-    info->used_head = -1;
-    info->used_tail = -1;
+    info->free_list = &logmgr_gl.wait_entry_table[0];
     pthread_mutex_init(&logmgr_gl.wait_entry_lock, NULL);
 
     /* initialize group commit */

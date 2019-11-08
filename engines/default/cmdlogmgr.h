@@ -27,9 +27,6 @@ typedef struct logsn {
 typedef struct _log_waiter {
     struct _log_waiter *wait_next;
     LogSN               lsn;
-    int16_t             curr_eid;   /* curr entry id */
-    int16_t             next_eid;   /* next entry id */
-    int16_t             prev_eid;   /* prev entry id */
     const void         *cookie;
 } log_waiter_t;
 
