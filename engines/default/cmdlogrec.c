@@ -213,31 +213,39 @@ static void lrec_bkey_print(uint8_t nbkey, unsigned char *bkey, char *str)
 {
     if (nbkey != BKEY_NULL) {
         if (nbkey == 0) {
-            sprintf(str, "len=%u val=%"PRIu64, nbkey, *(uint64_t*)bkey);
+            sprintf(str, "(len=%u, val=%"PRIu64")", nbkey, *(uint64_t*)bkey);
         } else {
             char bkey_temp[MAX_BKEY_LENG*2 + 2];
             safe_hexatostr(bkey, nbkey, bkey_temp);
-            sprintf(str, "len=%u val=0x%s", nbkey, bkey_temp);
+            sprintf(str, "(len=%u, val=0x%s)", nbkey, bkey_temp);
         }
     } else {
-        sprintf(str, "len=BKEY_NULL val=0");
+        sprintf(str, "(len=BKEY_NULL, val=0)");
     }
 }
 
 static void lrec_eflag_print(uint8_t neflag, unsigned char *eflag, char *str)
 {
-    assert(neflag > 0);
-
-    char eflag_temp[MAX_EFLAG_LENG*2 + 2];
-    safe_hexatostr(eflag, neflag, eflag_temp);
-    sprintf(str, "len=%u val=0x%s", neflag, eflag_temp);
+    if (neflag != 0) {
+        char eflag_temp[MAX_EFLAG_LENG*2 + 2];
+        safe_hexatostr(eflag, neflag, eflag_temp);
+        sprintf(str, "(len=%u, val=0x%s)", neflag, eflag_temp);
+    } else {
+        sprintf(str, "NULL");
+    }
 }
 
-static void lrec_attr_print(lrec_attr_info *attr)
+static void lrec_attr_print(uint8_t create, char *data, char *str)
 {
-    fprintf(stderr, "[ATTR]   flags=%u | exptime=%u | maxcount=%d | ovflaction=%u | readable=%u\n",
-            attr->flags, attr->exptime, attr->maxcount, attr->ovflaction,
-            (attr->mflags & COLL_META_FLAG_READABLE ? 1 : 0));
+    if (create) {
+        lrec_attr_info info;
+        memcpy(&info, data, sizeof(lrec_attr_info));
+        sprintf(str, "(flags=%u, exptime=%u, maxcount=%d, ovflaction=%u, readable=%u)",
+                info.flags, info.exptime, info.maxcount, info.ovflaction,
+                (info.mflags & COLL_META_FLAG_READABLE ? 1 : 0));
+    } else {
+        sprintf(str, "NULL");
+    }
 }
 
 static inline void do_construct_item_attr(char *ptr, item_attr *attr)
@@ -356,7 +364,7 @@ static void lrec_it_link_print(LogRec *logrec)
 
         if (cm->ittype == ITEM_TYPE_BTREE) {
             unsigned char *maxbkrptr = (unsigned char*)body->data;
-            leng += sprintf(metastr + leng, " | maxbkeyrange ");
+            leng += sprintf(metastr + leng, " | maxbkeyrange=");
             lrec_bkey_print(meta->maxbkrlen, maxbkrptr, metastr + leng);
             if (meta->maxbkrlen != BKEY_NULL) {
                 keyptr += BTREE_REAL_NBKEY(meta->maxbkrlen);
@@ -366,11 +374,11 @@ static void lrec_it_link_print(LogRec *logrec)
 
     lrec_header_print(&log->header);
     /* vallen >= 2, valstr = ...\r\n */
-    fprintf(stderr, "[BODY]   keylen=%u | keystr=%.*s | ittype=%s | "
-            "flags=%u | exptime=%u | %s | vallen=%u | valstr=%.*s",
+    fprintf(stderr, "[BODY  ] keylen=%u | keystr=%.*s | ittype=%s | "
+            "flags=%u | exptime=%u | %s | vallen=%u | valstr=%.*s\r\n",
             cm->keylen, (cm->keylen <= 250 ? cm->keylen : 250), keyptr,
             get_itemtype_text(cm->ittype), htonl(cm->flags), cm->exptime, metastr,
-            cm->vallen, (cm->vallen <= 250 ? cm->vallen : 250), keyptr + cm->keylen);
+            cm->vallen, (cm->vallen <= 250 ? cm->vallen-2 : 250), keyptr + cm->keylen);
 }
 
 /* Item Unlink Log Record */
@@ -404,7 +412,7 @@ static void lrec_it_unlink_print(LogRec *logrec)
     char *keyptr = log->body.data;
 
     lrec_header_print(&log->header);
-    fprintf(stderr, "[BODY]   keylen=%u | keystr=%.*s\r\n",
+    fprintf(stderr, "[BODY  ] keylen=%u | keystr=%.*s\r\n",
             log->body.keylen, (log->body.keylen <= 250 ? log->body.keylen : 250), keyptr);
 }
 
@@ -480,7 +488,7 @@ static void lrec_it_setattr_print(LogRec *logrec)
     switch (log->header.updtype) {
       case UPD_SETATTR_EXPTIME:
       {
-        fprintf(stderr, "[BODY]   keylen=%u | keystr=%.*s | exptime=%u\r\n",
+        fprintf(stderr, "[BODY  ] keylen=%u | keystr=%.*s | exptime=%u\r\n",
                 log->body.keylen, (log->body.keylen <= 250 ? log->body.keylen : 250), keyptr,
                 log->body.exptime);
       }
@@ -491,15 +499,14 @@ static void lrec_it_setattr_print(LogRec *logrec)
         char metastr[180];
         if (log->body.maxbkrlen != BKEY_NULL) {
             unsigned char *maxbkrptr = (unsigned char*)log->body.data;
-            int leng = sprintf(metastr, "maxbkeyrange ");
-            lrec_bkey_print(log->body.maxbkrlen, maxbkrptr, metastr + leng);
+            lrec_bkey_print(log->body.maxbkrlen, maxbkrptr, metastr);
             keyptr += BTREE_REAL_NBKEY(log->body.maxbkrlen);
         } else {
-            sprintf(metastr, "maxbkeyrange NULL");
+            sprintf(metastr, "NULL");
         }
 
-        fprintf(stderr, "[BODY]   keylen=%u | keystr=%.*s | ovflact=%s | "
-                "mflags=%u | mcnt=%u | exptime=%u | %s\r\n",
+        fprintf(stderr, "[BODY  ] keylen=%u | keystr=%.*s | ovflact=%s | "
+                "mflags=%u | mcnt=%u | exptime=%u | maxbkeyrange=%s\r\n",
                 log->body.keylen, (log->body.keylen <= 250 ? log->body.keylen : 250), keyptr,
                 get_coll_ovflact_text(log->body.ovflact), log->body.mflags, log->body.mcnt,
                 log->body.exptime, metastr);
@@ -550,7 +557,7 @@ static void lrec_it_flush_print(LogRec *logrec)
     bool print_prefix = (log->body.nprefix > 0 && log->body.nprefix < 255 ? true : false);
 
     lrec_header_print(&log->header);
-    fprintf(stderr, "[BODY]   nprefix=%u | prefixstr=%.*s\r\n",
+    fprintf(stderr, "[BODY  ] nprefix=%u | prefixstr=%.*s\r\n",
             log->body.nprefix, (print_prefix ? log->body.nprefix : 4),
             (print_prefix ? prefixptr : "NULL"));
 }
@@ -625,17 +632,16 @@ static void lrec_list_elem_insert_print(LogRec *logrec)
     char *keyptr = log->body.data;
     char *valptr = keyptr + log->body.keylen;
 
+    char attrstr[180];
+    lrec_attr_print(log->body.create, valptr + log->body.vallen, attrstr);
     lrec_header_print(&log->header);
-    fprintf(stderr, "[BODY]   keylen=%u | keystr=%.*s | "
-            "totcnt=%u | eindex=%d | vallen=%u | valstr=%.*s",
+    /* vallen >= 2, valstr = ...\r\n */
+    /* <key> <totcnt> <eindex> [create <attributes>] <data> */
+    fprintf(stderr, "[BODY  ] keylen=%u | keystr=%.*s | "
+            "totcnt=%u | eindex=%d | attr=%s | vallen=%u | valstr=%.*s\r\n",
             log->body.keylen, (log->body.keylen <= 250 ? log->body.keylen : 250), keyptr,
-            log->body.totcnt, log->body.eindex,
-            log->body.vallen, (log->body.vallen <= 250 ? log->body.vallen : 250), valptr);
-    if (log->body.create) {
-        lrec_attr_info info;
-        memcpy(&info, (char*)(valptr + log->body.vallen), sizeof(lrec_attr_info));
-        lrec_attr_print(&info);
-    }
+            log->body.totcnt, log->body.eindex, attrstr,
+            log->body.vallen, (log->body.vallen <= 250 ? log->body.vallen-2 : 250), valptr);
 }
 
 /* List Element Delete Log Record */
@@ -677,7 +683,7 @@ static void lrec_list_elem_delete_print(LogRec *logrec)
     char *keyptr = log->body.data;
 
     lrec_header_print(&log->header);
-    fprintf(stderr, "[BODY]   keylen=%u | keystr=%.*s | totcnt=%u | eindex=%d | delcnt=%u | drop=%s\r\n",
+    fprintf(stderr, "[BODY  ] keylen=%u | keystr=%.*s | totcnt=%u | eindex=%d | delcnt=%u | drop=%s\r\n",
             log->body.keylen, (log->body.keylen <= 250 ? log->body.keylen : 250), keyptr,
             log->body.totcnt, log->body.eindex, log->body.delcnt, (log->body.drop ? "true" : "false"));
 }
@@ -753,15 +759,14 @@ static void lrec_set_elem_insert_print(LogRec *logrec)
     char *keyptr = log->body.data;
     char *valptr = keyptr + log->body.keylen;
 
+    char attrstr[180];
+    lrec_attr_print(log->body.create, valptr + log->body.vallen, attrstr);
     lrec_header_print(&log->header);
-    fprintf(stderr, "[BODY]   keylen=%u | keystr=%.*s | vallen=%u | valstr=%.*s",
-            log->body.keylen, (log->body.keylen <= 250 ? log->body.keylen : 250), keyptr,
-            log->body.vallen, (log->body.vallen <= 250 ? log->body.vallen : 250), valptr);
-    if (log->body.create) {
-        lrec_attr_info info;
-        memcpy(&info, (char*)(valptr + log->body.vallen), sizeof(lrec_attr_info));
-        lrec_attr_print(&info);
-    }
+    /* vallen >= 2, valstr = ...\r\n */
+    /* <key> [create <attributes>] <data> */
+    fprintf(stderr, "[BODY  ] keylen=%u | keystr=%.*s | attr=%s | vallen=%u | valstr=%.*s\r\n",
+            log->body.keylen, (log->body.keylen <= 250 ? log->body.keylen : 250), keyptr, attrstr,
+            log->body.vallen, (log->body.vallen <= 250 ? log->body.vallen-2 : 250), valptr);
 }
 
 /* Set Element Delete Log Record */
@@ -807,10 +812,11 @@ static void lrec_set_elem_delete_print(LogRec *logrec)
     char *valptr = keyptr + log->body.keylen;
 
     lrec_header_print(&log->header);
-    fprintf(stderr, "[BODY]   keylen=%u | keystr=%.*s | vallen=%u | valstr=%.*s | drop=%s\r\n",
+    /* vallen >= 2, valstr = ...\r\n */
+    fprintf(stderr, "[BODY  ] keylen=%u | keystr=%.*s | drop=%s | vallen=%u | valstr=%.*s\r\n",
             log->body.keylen, (log->body.keylen <= 250 ? log->body.keylen : 250), keyptr,
-            log->body.vallen, (log->body.vallen <= 250 ? log->body.vallen : 250), valptr,
-            (log->body.drop ? "true" : "false"));
+            (log->body.drop ? "true" : "false"),
+            log->body.vallen, (log->body.vallen <= 250 ? log->body.vallen-2 : 250), valptr);
 }
 
 /* Map Element Insert Log Record */
@@ -885,16 +891,16 @@ static void lrec_map_elem_insert_print(LogRec *logrec)
     char *fldptr = keyptr + log->body.keylen;
     char *valptr = fldptr + log->body.fldlen;
 
+    char attrstr[180];
+    lrec_attr_print(log->body.create, valptr + log->body.vallen, attrstr);
     lrec_header_print(&log->header);
-    fprintf(stderr, "[BODY]   keylen=%u | keystr=%.*s | fldlen=%u | fldstr=%.*s | vallen=%u | valstr=%.*s",
+    /* vallen >= 2, valstr = ...\r\n */
+    /* <key> <field> [create <attributes>] <data> */
+    fprintf(stderr, "[BODY  ] keylen=%u | keystr=%.*s | fldlen=%u | fldstr=%.*s | "
+            "attr=%s | vallen=%u | valstr=%.*s\r\n",
             log->body.keylen, (log->body.keylen <= 250 ? log->body.keylen : 250), keyptr,
-            log->body.fldlen, log->body.fldlen, fldptr,
-            log->body.vallen, (log->body.vallen <= 250 ? log->body.vallen : 250), valptr);
-    if (log->body.create) {
-        lrec_attr_info info;
-        memcpy(&info, (char*)(valptr + log->body.vallen), sizeof(lrec_attr_info));
-        lrec_attr_print(&info);
-    }
+            log->body.fldlen, log->body.fldlen, fldptr, attrstr,
+            log->body.vallen, (log->body.vallen <= 250 ? log->body.vallen-2 : 250), valptr);
 }
 
 /* Map Element Delete Log Record */
@@ -1017,31 +1023,26 @@ static void lrec_bt_elem_insert_print(LogRec *logrec)
 {
     BtreeElemInsLog *log = (BtreeElemInsLog*)logrec;
     char *keyptr = log->body.data;
-    unsigned char *bkeyptr = (unsigned char*)(keyptr + log->body.keylen);
-
-    char bkeystr[60];
-    char eflagstr[60];
     uint64_t real_nbkey = BTREE_REAL_NBKEY(log->body.nbkey);
-    int leng = sprintf(bkeystr, "bkey");
-    lrec_bkey_print(log->body.nbkey, bkeyptr, bkeystr + leng);
-    if (log->body.neflag != 0) {
-        leng = sprintf(eflagstr, "eflag");
-        lrec_eflag_print(log->body.neflag, bkeyptr + real_nbkey, eflagstr + leng);
-    }
+    unsigned char *bkeyptr = (unsigned char*)(keyptr + log->body.keylen);
+    unsigned char *eflagptr = bkeyptr + real_nbkey;
+    char *attrptr = (char*)(eflagptr + log->body.neflag + log->body.vallen);
 
+    char bkeystr[90];
+    char eflagstr[90];
+    char attrstr[180];
+    lrec_bkey_print(log->body.nbkey, bkeyptr, bkeystr);
+    lrec_eflag_print(log->body.neflag, eflagptr, eflagstr);
+    lrec_attr_print(log->body.create, attrptr, attrstr);
     lrec_header_print(&log->header);
-    /* <key> <bkey> [<eflag>] <data> */
-    fprintf(stderr, "[BODY]   keylen=%u | keystr=%.*s | "
-            "%s | %s | vallen=%u | valstr=%.*s",
+    /* vallen >= 2, valstr = ...\r\n */
+    /* <key> <bkey> [<eflag>] [create <attributes>] <data> */
+    fprintf(stderr, "[BODY  ] keylen=%u | keystr=%.*s | "
+            "bkey=%s | eflag=%s | attr=%s | vallen=%u | valstr=%.*s\r\n",
             log->body.keylen, (log->body.keylen <= 250 ? log->body.keylen : 250), keyptr,
-            bkeystr, (log->body.neflag != 0 ? eflagstr : "[eflag]"),
-            log->body.vallen, (log->body.vallen <= 250 ? log->body.vallen : 250),
+            bkeystr, eflagstr, attrstr,
+            log->body.vallen, (log->body.vallen <= 250 ? log->body.vallen-2 : 250),
             bkeyptr + real_nbkey + log->body.neflag);
-    if (log->body.create) {
-        lrec_attr_info info;
-        memcpy(&info, (char*)(bkeyptr + real_nbkey + log->body.neflag + log->body.vallen), sizeof(lrec_attr_info));
-        lrec_attr_print(&info);
-    }
 }
 
 /* BTree Element Delete Log Record */
@@ -1087,14 +1088,12 @@ static void lrec_bt_elem_delete_print(LogRec *logrec)
     char *keyptr = log->body.data;
     unsigned char *bkeyptr = (unsigned char*)(keyptr + log->body.keylen);
 
-    char metastr[180];
-    int leng = sprintf(metastr, "bkey");
-    lrec_bkey_print(log->body.nbkey, bkeyptr, metastr + leng);
-
+    char bkeystr[90];
+    lrec_bkey_print(log->body.nbkey, bkeyptr, bkeystr);
     lrec_header_print(&log->header);
-    fprintf(stderr, "[BODY]   keylen=%u | keystr=%.*s | %s | drop=%s\r\n",
+    fprintf(stderr, "[BODY  ] keylen=%u | keystr=%.*s | bkey=%s | drop=%s\r\n",
             log->body.keylen, (log->body.keylen <= 250 ? log->body.keylen : 250), keyptr,
-            metastr, (log->body.drop ? "true" : "false"));
+            bkeystr, (log->body.drop ? "true" : "false"));
 }
 
 /* BTree Element Delete Logical Log Record */
@@ -1188,17 +1187,13 @@ static void lrec_bt_elem_delete_logical_print(LogRec *logrec)
     char *fbkeyptr = keyptr + log->body.keylen;
     char *tbkeyptr = fbkeyptr + BTREE_REAL_NBKEY(log->body.from_nbkey);
 
-    char fbkeystr[32];
-    char tbkeystr[32];
+    char fbkeystr[90];
+    char tbkeystr[90];
     lrec_bkey_print(log->body.from_nbkey, (unsigned char *)fbkeyptr, fbkeystr);
     lrec_bkey_print(log->body.to_nbkey, (unsigned char*)tbkeyptr, tbkeystr);
 
-    lrec_header_print(&log->header);
-    fprintf(stderr, "[BODY]   keylen=%u | keystr=%.*s | drop=%s\r\n",
-            log->body.keylen, (log->body.keylen <= 250 ? log->body.keylen : 250), keyptr,
-            (log->body.drop ? "true" : "false"));
-    fprintf(stderr, "[BKRNG]  from_bkey%s | to_bkey%s | offset=%u | reqcount=%u\r\n",
-            fbkeystr, tbkeystr, log->body.offset, log->body.reqcount);
+    int filterlen = MAX_EFLAG_LENG*2 + (MAX_EFLAG_LENG*2+3)*MAX_EFLAG_COMPARE_COUNT + 100;
+    char filterstr[filterlen];
     if (log->body.filtering) {
         bool single_bkey = (BTREE_REAL_NBKEY(log->body.to_nbkey) == BKEY_NULL ? true : false);
         char *bitwvalptr = tbkeyptr + (single_bkey ? 0 : BTREE_REAL_NBKEY(log->body.to_nbkey));
@@ -1222,11 +1217,19 @@ static void lrec_bt_elem_delete_logical_print(LogRec *logrec)
                 memcpy(tmpptr, ",0x", 3); tmpptr += 3;
             }
         }
-
-        fprintf(stderr, "[FILTER] fwhere=%u | bitwop=%u | bitwval=0x%s | compop=%u | compval(count=%u)=0x%s\r\n",
+        sprintf(filterstr, "(fwhere=%u, bitwop=%u, bitwval=0x%s, compop=%u, compval(count=%u)=0x%s)",
                 log->body.fwhere, log->body.bitwop, (log->body.nbitwval > 0 ? bitwvalstr : "NULL"),
                 log->body.compop, log->body.compvcnt, compvalstr);
+    } else {
+        sprintf(filterstr, "NULL");
     }
+    lrec_header_print(&log->header);
+    /* <key> <drop> <bkrange> [<filter>] */
+    fprintf(stderr, "[BODY  ] keylen=%u | keystr=%.*s | drop=%s | offset=%u | reqcount=%u |\r\n"
+                    "         bkrange=(from_bkey=%s, to_bkey=%s)\r\n"
+                    "         filter=%s\r\n",
+            log->body.keylen, (log->body.keylen <= 250 ? log->body.keylen : 250), keyptr, (log->body.drop ? "true" : "false"),
+            log->body.offset, log->body.reqcount, fbkeystr, tbkeystr, filterstr);
 }
 
 /* Snapshot Element Log Record */
@@ -1281,28 +1284,25 @@ static void lrec_snapshot_elem_link_print(LogRec *logrec)
     lrec_header_print(&log->header);
     /* vallen >= 2, valstr = ...\r\n */
     if (log->header.updtype == UPD_MAP_ELEM_INSERT) {
-        fprintf(stderr, "[BODY]   nfield=%u | field=%.*s | vallen=%u | value=%.*s",
+        fprintf(stderr, "[BODY  ] nfield=%u | field=%.*s | vallen=%u | value=%.*s\r\n",
                 body->nekey, body->nekey, valptr,
-                body->nbytes, (body->nbytes <= 250 ? body->nbytes : 250), (valptr + body->nekey));
+                body->nbytes, (body->nbytes <= 250 ? body->nbytes-2 : 250), (valptr + body->nekey));
     } else if (log->header.updtype == UPD_BT_ELEM_INSERT) {
-        char bkeystr[60];
-        char eflagstr[60];
+        char bkeystr[90];
+        char eflagstr[90];
+        unsigned char *bkeyptr = (unsigned char*)valptr;
+        unsigned char *eflagptr = (unsigned char*)(valptr + BTREE_REAL_NBKEY(body->nekey));
+        lrec_bkey_print(body->nekey, bkeyptr, bkeystr);
+        lrec_eflag_print(body->neflag, eflagptr, eflagstr);
 
-        int leng = sprintf(bkeystr, "bkey ");
-        lrec_bkey_print(body->nekey, (unsigned char*)valptr, bkeystr + leng);
-        if (body->neflag != 0) {
-            leng = sprintf(eflagstr, " | eflag ");
-            lrec_eflag_print(body->neflag, (unsigned char*)(valptr + BTREE_REAL_NBKEY(body->nekey)), eflagstr + leng);
-        }
-
-        /* <key> <bkey> [<eflag>] <bytes> <data> */
-        fprintf(stderr, "[BODY]   %s%s | vallen=%u | value=%.*s",
-                bkeystr, (body->neflag != 0 ? eflagstr : ""), body->nbytes,
-                (body->nbytes <= 250 ? body->nbytes : 250),
+        /* <bkey> [<eflag>] <bytes> <data> */
+        fprintf(stderr, "[BODY  ] bkey=%s | eflag=%s | vallen=%u | value=%.*s\r\n",
+                bkeystr, eflagstr, body->nbytes,
+                (body->nbytes <= 250 ? body->nbytes-2 : 250),
                 (valptr + BTREE_REAL_NBKEY(body->nekey) + body->neflag));
     } else {
-        fprintf(stderr, "[BODY]   nbytes=%u | value=%.*s",
-                body->nbytes, body->nbytes, valptr);
+        fprintf(stderr, "[BODY  ] vallen=%u | value=%.*s\r\n",
+                body->nbytes, (body->nbytes <= 250 ? body->nbytes-2 : 250), valptr);
     }
 }
 
@@ -1319,8 +1319,8 @@ static void lrec_snapshot_done_print(LogRec *logrec)
     SnapshotDoneData *body = &log->body;
 
     lrec_header_print(&log->header);
-    fprintf(stderr, "[BODY]   engine_name=%s | persistence_major_version=%u | "
-            "persistence_minor_version=%u\n",
+    fprintf(stderr, "[BODY  ] engine_name=%s | persistence_major_version=%u | "
+            "persistence_minor_version=%u\r\n",
             body->engine_name, body->persistence_major_version, body->persistence_minor_version);
 }
 
